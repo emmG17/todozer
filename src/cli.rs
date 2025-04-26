@@ -10,4 +10,8 @@ pub struct Cli {
     /// The path to the source code to scan
     #[arg(short, long, default_value = ".")]
     pub path: String,
+
+    /// The output path of the todo JSON file
+    #[arg(short, long, default_value = "todos.json")]
+    pub out: String
 }

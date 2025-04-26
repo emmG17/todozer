@@ -57,7 +57,7 @@ pub fn run(cli: &Cli) {
             Some(repo) => {
                println!("Repo {}", repo.display());
                let full_todos = find_blame(&repo, &dir.to_path_buf(), &todos);   
-               to_json(&full_todos)
+               to_json(&full_todos, &cli.out)
             }
             None => {
                 println!("Path is not a git repository");
