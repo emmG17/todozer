@@ -1,15 +1,25 @@
-use crate::cli::Cli;
+use serde::Serialize;
+use crate::{cli::Cli, git::find_blame, serialize::to_json};
 use std::{
     fs::{self, File},
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
 };
 
-struct NaiveTodo {
-    line_number: usize,
-    line: String,
-    file_path: String,
-    value: String,
+#[derive(Debug, Serialize)]
+pub struct Todo {
+    pub title: String,
+    pub author: String,
+    pub email: String,
+    pub datetime: String,
+    pub file: String,
+    pub line: usize,
+}
+
+pub struct NaiveTodo {
+    pub line_number: usize,
+    pub file_path: String,
+    pub value: String,
 }
 
 const TODO_SEARCH_TERMS: [&str; 10] = [
@@ -38,18 +48,22 @@ pub fn run(cli: &Cli) {
     if fs::metadata(&cli.path).unwrap().is_file() {
         println!("Path is a file");
         let dir = Path::new(&cli.path);
-        find_todos(&dir);
+        let todos = find_todos(&dir);
+
         // Check if the file is a git repository, recurse until we find the first parent directory
         // that is a git repository
         let path = cli.path.clone();
-        let repo = match find_git_repo(path.as_str()) {
-            Some(repo) => repo,
+        match find_git_repo(path.as_str()) {
+            Some(repo) => {
+               println!("Repo {}", repo.display());
+               let full_todos = find_blame(&repo, &dir.to_path_buf(), &todos);   
+               to_json(&full_todos)
+            }
             None => {
                 println!("Path is not a git repository");
                 return;
             }
         };
-        println!("File is in a git repository: {}", repo.display());
     }
 
     // Check if the path is a directory
@@ -96,7 +110,8 @@ fn is_git_repo(path: &PathBuf) -> bool {
 }
 
 // TODO: Implement a function to find TODOs in the code
-fn find_todos(path: &Path) {
+fn find_todos(path: &Path) -> Vec<NaiveTodo> {
+    let mut todos: Vec<NaiveTodo> = Vec::new();
     // Get all the search terms + end terms combinations
     let search_terms = search_items_combinations(&TODO_SEARCH_TERMS, &TODO_END_TERMS);
 
@@ -104,7 +119,7 @@ fn find_todos(path: &Path) {
         Ok(f) => f,
         Err(_) => {
             eprintln!("Error opening file: {}", path.display());
-            return;
+            return vec![];
         }
     };
 
@@ -119,16 +134,15 @@ fn find_todos(path: &Path) {
             }
         };
 
-        todo_matcher(path, &line, line_number, &search_terms).map(|todo| {
-            println!(
-                "Found TODO in {} - {}: {} -> {}",
-                todo.file_path,
-                todo.line_number + 1,
-                todo.line,
-                todo.value
-            );
-        });
+        match todo_matcher(path, &line, line_number, &search_terms) {
+            Some(todo) => {
+                todos.push(todo);
+            }
+            None => continue
+        }
     }
+
+    return todos;
 }
 
 fn todo_matcher(
@@ -147,11 +161,10 @@ fn todo_matcher(
         let todo = NaiveTodo {
             line_number,
             value,
-            line: line.to_string(),
             file_path: file.display().to_string(),
         };
         return Some(todo);
-    } 
+    }
 
     None
 }
@@ -166,7 +179,6 @@ fn get_todo_value(line: &str, term: &str, comment: &str) -> String {
         .trim_start()
         .to_string()
 }
-
 
 fn search_items_combinations(search_terms: &[&str], end_terms: &[&str]) -> Vec<String> {
     let mut combinations = Vec::new();

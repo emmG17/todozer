@@ -1,5 +1,7 @@
 mod cli;
 mod scanner;
+mod git;
+mod serialize;
 
 use cli::Cli;
 use clap::Parser;
