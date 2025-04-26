@@ -73,8 +73,7 @@ fn line_blame(
     let email = signature.email().unwrap_or("Unknown").to_string();
 
     let timestamp = signature.when().seconds();
-    // TODO: export it as ISO DATE 
-    let datetime = DateTime::from_timestamp(timestamp, 0).unwrap().to_string();
+    let datetime = DateTime::from_timestamp(timestamp, 0).unwrap().to_rfc3339();
 
     let blame_data = BlameData {
         author,
