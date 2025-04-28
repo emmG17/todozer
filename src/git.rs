@@ -18,7 +18,7 @@ pub fn find_blame(repo_dir: &PathBuf, file: &PathBuf, todos: &Vec<NaiveTodo>) ->
     let repo = match Repository::open(repo_dir) {
         Ok(repo) => repo,
         Err(e) => {
-            println!("Error opening repository: {}", e);
+            eprintln!("Error opening repository: {}", e);
             return vec![];
         }
     };
