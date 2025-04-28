@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::fs;
 
 use chrono::DateTime;
-use git2::Repository;
+use git2::{Repository, Status};
 
 use crate::scanner::{NaiveTodo, Todo};
 
@@ -15,16 +15,24 @@ pub struct BlameData {
 pub fn find_blame(repo_dir: &PathBuf, file: &PathBuf, todos: &Vec<NaiveTodo>) -> Vec<Todo> {
     let mut full_todos: Vec<Todo>= Vec::new();
     // Open the repository
-    let repo = match Repository::open(repo_dir) {
-        Ok(repo) => repo,
-        Err(e) => {
-            eprintln!("Error opening repository: {}", e);
+    let repo = match get_repo(repo_dir) {
+        Some(repo) => repo,
+        None => {
+            eprintln!("Error opening repository");
             return vec![];
         }
     };
 
     // File relative to the repository
     let file_relative = relative_path(&repo_dir, file);
+
+    // Verify that the file is not ignored by .gitignore
+    let ignore = repo.status_file(&file_relative).unwrap_or(Status::IGNORED);
+
+    if ignore == Status::IGNORED {
+        eprintln!("File {} is ignored by .gitignore", file_relative.display());
+        return vec![];
+    }
 
     // Get the blames for each TODO
     todos.iter().for_each(|t| {
@@ -45,6 +53,17 @@ pub fn find_blame(repo_dir: &PathBuf, file: &PathBuf, todos: &Vec<NaiveTodo>) ->
     });
 
     return full_todos;
+}
+
+fn get_repo(path: &PathBuf) -> Option<Repository> {
+    let repo = match Repository::discover(path) {
+        Ok(repo) => repo,
+        Err(e) => {
+            eprintln!("Error opening repository: {}", e);
+            return None;
+        }
+    };
+    Some(repo)
 }
 
 fn line_blame(
@@ -80,7 +99,7 @@ fn line_blame(
     Some(blame_data)
 }
 
-fn relative_path(repo: &PathBuf, file: &PathBuf) -> PathBuf {
+pub fn relative_path(repo: &PathBuf, file: &PathBuf) -> PathBuf {
     // Make both paths absolute first
     let file_abs = fs::canonicalize(file).unwrap_or(file.clone());
     let repo_path = fs::canonicalize(repo).unwrap_or(repo.to_path_buf());

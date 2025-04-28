@@ -1,4 +1,9 @@
-use crate::{cli::Cli, git::find_blame, serialize::to_json};
+use crate::{
+    cli::Cli,
+    git::{self, find_blame},
+    serialize::to_json,
+};
+use git2::Repository;
 use serde::Serialize;
 use std::{
     fs::{self, File},
@@ -22,9 +27,7 @@ pub struct NaiveTodo {
     pub value: String,
 }
 
-const TODO_SEARCH_TERMS: [&str; 5] = [
-    "TODO", "FIXME", "HACK", "NOTE", "BUG"
-];
+const TODO_SEARCH_TERMS: [&str; 5] = ["TODO", "FIXME", "HACK", "NOTE", "BUG"];
 
 const TODO_END_TERMS: [&str; 2] = [":", "->"];
 
@@ -64,16 +67,18 @@ pub fn run(cli: &Cli) {
 
         let mut all_todos = Vec::new();
 
+        let git_repo = if is_some_repo {
+            Some(Repository::open(repo_root.clone().unwrap()).unwrap())
+        } else {
+            None
+        };
+
         // Iterate over all files in the directory
-        let walker = walkdir::WalkDir::new(&cli.path)
-            .follow_links(true)
-            .into_iter()
-            .filter_map(Result::ok)
-            .filter(|e| e.path().is_file() && is_valid_extension(e.path()));
+        let walker = walkdir::WalkDir::new(&cli.path).follow_links(false);
+        let files = filter_files(walker, git_repo);
 
-        for entry in walker {
+        for entry in files {
             let file_path = entry.path();
-
             let todos = find_todos(file_path);
             if is_some_repo {
                 // If the path is a git repository, get the full todos
@@ -120,6 +125,43 @@ fn is_git_repo(path: &PathBuf) -> bool {
     return fs::metadata(&git_path).is_ok();
 }
 
+fn filter_files(walker: walkdir::WalkDir, git_repo: Option<Repository>) -> Vec<walkdir::DirEntry> {
+    walker
+        .into_iter()
+        // Use filter_entry to skip traversing into ignored directories entirely
+        .filter_entry(|entry| {
+            if let Some(repo) = &git_repo {
+                if entry.path().is_dir() {
+                    let dir_relative = git::relative_path(
+                        &repo.workdir().unwrap().to_path_buf(),
+                        &entry.path().to_path_buf(),
+                    );
+
+                    return !repo.status_should_ignore(&dir_relative).unwrap_or(false);
+                }
+            }
+            true // Continue with traversal
+        })
+        .filter_map(Result::ok)
+        // Filter files with valid extensions
+        .filter(|e| e.path().is_file() && is_valid_extension(e.path()))
+        // Filter out ignored files
+        .filter(|e| {
+            if let Some(repo) = &git_repo {
+                let file_relative = git::relative_path(
+                    &repo.workdir().unwrap().to_path_buf(),
+                    &e.path().to_path_buf(),
+                );
+
+                if let Ok(status) = repo.status_file(&file_relative) {
+                    return !status.is_ignored();
+                }
+            }
+            true
+        })
+        .collect()
+}
+
 // TODO: Implement a function to find TODOs in the code
 fn find_todos(path: &Path) -> Vec<NaiveTodo> {
     let mut todos: Vec<NaiveTodo> = Vec::new();
@@ -163,7 +205,9 @@ fn todo_matcher(
     line_number: usize,
     search_terms: &[String],
 ) -> Option<NaiveTodo> {
-    let found_term = search_terms.iter().find(|term| line.to_uppercase().contains(*term));
+    let found_term = search_terms
+        .iter()
+        .find(|term| line.to_uppercase().contains(*term));
     let comment_string = CODE_COMMENTS
         .iter()
         .find(|term| line.trim_start().starts_with(*term));
@@ -203,7 +247,6 @@ fn search_items_combinations(search_terms: &[&str], end_terms: &[&str]) -> Vec<S
     }
     return combinations;
 }
-
 
 /// Handle a single file search for TODOs
 fn handle_file(file_path: &Path, cli: &Cli) {
