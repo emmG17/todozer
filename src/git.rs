@@ -108,3 +108,33 @@ pub fn relative_path(repo: &PathBuf, file: &PathBuf) -> PathBuf {
     let file_relative = file_abs.strip_prefix(repo_path).unwrap_or(&file_abs);
     return file_relative.to_path_buf();
 }
+
+/// Finds the first parent directory that is a git repository
+pub fn find_git_repo(origin_path: &str) -> Option<PathBuf> {
+    // Check if the file is a git repository, recurse until we find the first parent directory
+    // that is a git repository
+    let mut path = PathBuf::from(origin_path);
+
+    loop {
+        if is_git_repo(&path) {
+            return Some(path);
+        }
+
+        match fs::canonicalize(&path)
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        {
+            Some(parent) => {
+                path = parent;
+            }
+            None => return None,
+        }
+    }
+}
+
+/// Check if the path is a git repository
+pub fn is_git_repo(path: &PathBuf) -> bool {
+    // Check if the path is a git repository
+    let git_path = format!("{}/.git", path.display());
+    return fs::metadata(&git_path).is_ok();
+}

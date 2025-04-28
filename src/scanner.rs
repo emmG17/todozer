@@ -8,7 +8,7 @@ use serde::Serialize;
 use std::{
     fs::{self, File},
     io::{BufRead, BufReader},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 #[derive(Debug, Serialize)]
@@ -29,7 +29,7 @@ pub struct NaiveTodo {
 
 const TODO_SEARCH_TERMS: [&str; 5] = ["TODO", "FIXME", "HACK", "NOTE", "BUG"];
 
-const TODO_END_TERMS: [&str; 2] = [":", "->"];
+const TODO_END_TERMS: [&str; 3] = [":", "->", " "];
 
 const CODE_COMMENTS: [&str; 6] = [
     "//",   // JavaScript, C, C++, Java, Go, Rust
@@ -61,7 +61,7 @@ pub fn run(cli: &Cli) {
 
     // Check if the path is a directory
     if fs::metadata(&cli.path).unwrap().is_dir() {
-        let repo_root = find_git_repo(&cli.path);
+        let repo_root = git::find_git_repo(&cli.path);
 
         let is_some_repo = repo_root.is_some();
 
@@ -93,36 +93,6 @@ pub fn run(cli: &Cli) {
 
         to_json(&all_todos, &cli.out);
     }
-}
-
-/// Finds the first parent directory that is a git repository
-fn find_git_repo(origin_path: &str) -> Option<PathBuf> {
-    // Check if the file is a git repository, recurse until we find the first parent directory
-    // that is a git repository
-    let mut path = PathBuf::from(origin_path);
-
-    loop {
-        if is_git_repo(&path) {
-            return Some(path);
-        }
-
-        match fs::canonicalize(&path)
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        {
-            Some(parent) => {
-                path = parent;
-            }
-            None => return None,
-        }
-    }
-}
-
-/// Check if the path is a git repository
-fn is_git_repo(path: &PathBuf) -> bool {
-    // Check if the path is a git repository
-    let git_path = format!("{}/.git", path.display());
-    return fs::metadata(&git_path).is_ok();
 }
 
 fn filter_files(walker: walkdir::WalkDir, git_repo: Option<Repository>) -> Vec<walkdir::DirEntry> {
@@ -167,6 +137,7 @@ fn find_todos(path: &Path) -> Vec<NaiveTodo> {
     let mut todos: Vec<NaiveTodo> = Vec::new();
     // Get all the search terms + end terms combinations
     let search_terms = search_items_combinations(&TODO_SEARCH_TERMS, &TODO_END_TERMS);
+    // Seach temrs
 
     let file = match File::open(path) {
         Ok(f) => f,
@@ -208,6 +179,7 @@ fn todo_matcher(
     let found_term = search_terms
         .iter()
         .find(|term| line.to_uppercase().contains(*term));
+
     let comment_string = CODE_COMMENTS
         .iter()
         .find(|term| line.trim_start().starts_with(*term));
@@ -254,7 +226,7 @@ fn handle_file(file_path: &Path, cli: &Cli) {
 
     let path = cli.path.clone();
 
-    match find_git_repo(path.as_str()) {
+    match git::find_git_repo(path.as_str()) {
         Some(repo) => {
             let full_todos = find_blame(&repo, &file_path.to_path_buf(), &todos);
             to_json(&full_todos, &cli.out)
@@ -287,4 +259,64 @@ fn naive_to_full(naives: &[NaiveTodo]) -> Vec<Todo> {
             line: nt.line_number,
         })
         .collect()
+}
+
+// Tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    fn dummy_path() -> &'static Path {
+        Path::new("dummy.rs")
+    }
+
+    #[test]
+    fn matches_todo_in_comment() {
+        let search_terms = search_items_combinations(&TODO_SEARCH_TERMS, &TODO_END_TERMS);
+        let line = "// TODO: fix this function";
+        let result = todo_matcher(dummy_path(), line, 5, &search_terms);
+        assert!(result.is_some());
+        let todo = result.unwrap();
+        assert_eq!(todo.line_number, 5);
+        assert_eq!(todo.value, "fix this function"); // assuming get_todo_value trims correctly
+    }
+
+    #[test]
+    fn matches_todo_without_two_colons() {
+        let search_terms = search_items_combinations(&TODO_SEARCH_TERMS, &TODO_END_TERMS);
+        let line  = "// TODO Agregar toast de rror";
+        let result = todo_matcher(dummy_path(), line, 8, &search_terms);
+        assert!(result.is_some());
+        let todo = result.unwrap();
+        assert_eq!(todo.line_number, 8);
+        assert_eq!(todo.value, "fix this function");
+    }
+
+    #[test]
+    fn matches_fixme_in_comment() {
+        let search_terms = search_items_combinations(&TODO_SEARCH_TERMS, &TODO_END_TERMS);
+        let line = "// FIXME: broken logic here";
+        let result = todo_matcher(dummy_path(), line, 10, &search_terms);
+        assert!(result.is_some());
+        let todo = result.unwrap();
+        assert_eq!(todo.line_number, 10);
+        assert_eq!(todo.value, "broken logic here");
+    }
+
+    #[test]
+    fn ignores_lines_without_comment_prefix() {
+        let search_terms = search_items_combinations(&TODO_SEARCH_TERMS, &TODO_END_TERMS);
+        let line = "TODO: no comment marker";
+        let result = todo_matcher(dummy_path(), line, 3, &search_terms);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn ignores_lines_without_search_term() {
+        let search_terms = search_items_combinations(&TODO_SEARCH_TERMS, &TODO_END_TERMS);
+        let line = "// WHAT: just a note, not a todo";
+        let result = todo_matcher(dummy_path(), line, 7, &search_terms);
+        assert!(result.is_none());
+    }
 }
