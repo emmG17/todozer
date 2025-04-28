@@ -169,6 +169,7 @@ fn find_todos(path: &Path) -> Vec<NaiveTodo> {
     return todos;
 }
 
+// TODO: Modify the parsing logic to handle different comment styles and spaces
 /// Check if the line contains a TODO and is a valid comment
 fn todo_matcher(
     file: &Path,
