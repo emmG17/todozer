@@ -1,5 +1,5 @@
-use serde::Serialize;
 use crate::{cli::Cli, git::find_blame, serialize::to_json};
+use serde::Serialize;
 use std::{
     fs::{self, File},
     io::{BufRead, BufReader},
@@ -22,8 +22,8 @@ pub struct NaiveTodo {
     pub value: String,
 }
 
-const TODO_SEARCH_TERMS: [&str; 10] = [
-    "TODO", "FIXME", "HACK", "NOTE", "BUG", "todo", "fixme", "hack", "note", "bug",
+const TODO_SEARCH_TERMS: [&str; 5] = [
+    "TODO", "FIXME", "HACK", "NOTE", "BUG"
 ];
 
 const TODO_END_TERMS: [&str; 2] = [":", "->"];
@@ -37,10 +37,15 @@ const CODE_COMMENTS: [&str; 6] = [
     "--",   // Lua, SQL
 ];
 
+const ALLOWED_EXTENSIONS: [&str; 23] = [
+    "rs", "js", "ts", "go", "java", "py", "rb", "sh", "c", "cpp", "html", "xml", "lua", "sql",
+    "tsx", "jsx", "css", "scss", "less", "json", "yaml", "yml", "toml",
+];
+
 pub fn run(cli: &Cli) {
     // Check if the path exists
     if !fs::metadata(&cli.path).is_ok() {
-        println!("Path does not exist");
+        eprintln!("Path does not exist");
         return;
     }
 
@@ -53,13 +58,9 @@ pub fn run(cli: &Cli) {
 
     // Check if the path is a directory
     if fs::metadata(&cli.path).unwrap().is_dir() {
-        let repo_root = match find_git_repo(&cli.path) {
-            Some(repo) => repo,
-            None => {
-                println!("No git repository found");
-                return;
-            }
-        };
+        let repo_root = find_git_repo(&cli.path);
+
+        let is_some_repo = repo_root.is_some();
 
         let mut all_todos = Vec::new();
 
@@ -68,17 +69,24 @@ pub fn run(cli: &Cli) {
             .follow_links(true)
             .into_iter()
             .filter_map(Result::ok)
-            .filter(|e| e.path().is_file());
+            .filter(|e| e.path().is_file() && is_valid_extension(e.path()));
 
         for entry in walker {
             let file_path = entry.path();
 
             let todos = find_todos(file_path);
-            let full_todos = find_blame(&repo_root, &file_path.to_path_buf(), &todos);
-            all_todos.extend(full_todos);
+            if is_some_repo {
+                // If the path is a git repository, get the full todos
+                let repo = repo_root.clone().unwrap();
+                let full_todos = find_blame(&repo, &file_path.to_path_buf(), &todos);
+                all_todos.extend(full_todos);
+            } else {
+                let full_todos = naive_to_full(&todos);
+                all_todos.extend(full_todos);
+            }
         }
 
-        to_json(&all_todos, &cli.out); 
+        to_json(&all_todos, &cli.out);
     }
 }
 
@@ -105,6 +113,7 @@ fn find_git_repo(origin_path: &str) -> Option<PathBuf> {
     }
 }
 
+/// Check if the path is a git repository
 fn is_git_repo(path: &PathBuf) -> bool {
     // Check if the path is a git repository
     let git_path = format!("{}/.git", path.display());
@@ -140,20 +149,21 @@ fn find_todos(path: &Path) -> Vec<NaiveTodo> {
             Some(todo) => {
                 todos.push(todo);
             }
-            None => continue
+            None => continue,
         }
     }
 
     return todos;
 }
 
+/// Check if the line contains a TODO and is a valid comment
 fn todo_matcher(
     file: &Path,
     line: &str,
     line_number: usize,
     search_terms: &[String],
 ) -> Option<NaiveTodo> {
-    let found_term = search_terms.iter().find(|term| line.contains(*term));
+    let found_term = search_terms.iter().find(|term| line.to_uppercase().contains(*term));
     let comment_string = CODE_COMMENTS
         .iter()
         .find(|term| line.trim_start().starts_with(*term));
@@ -171,6 +181,7 @@ fn todo_matcher(
     None
 }
 
+/// Get the value of the TODO from the line
 fn get_todo_value(line: &str, term: &str, comment: &str) -> String {
     line.trim_start()
         .strip_prefix(comment)
@@ -182,6 +193,7 @@ fn get_todo_value(line: &str, term: &str, comment: &str) -> String {
         .to_string()
 }
 
+/// Generate all combinations of search terms and end terms
 fn search_items_combinations(search_terms: &[&str], end_terms: &[&str]) -> Vec<String> {
     let mut combinations = Vec::new();
     for &term in search_terms {
@@ -192,6 +204,8 @@ fn search_items_combinations(search_terms: &[&str], end_terms: &[&str]) -> Vec<S
     return combinations;
 }
 
+
+/// Handle a single file search for TODOs
 fn handle_file(file_path: &Path, cli: &Cli) {
     let todos = find_todos(file_path);
 
@@ -203,7 +217,31 @@ fn handle_file(file_path: &Path, cli: &Cli) {
             to_json(&full_todos, &cli.out)
         }
         None => {
-            return;
+            let full_todos = naive_to_full(&todos);
+            to_json(&full_todos, &cli.out);
         }
     };
+}
+
+/// Check if the file extension is valid
+fn is_valid_extension(path: &Path) -> bool {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) => ALLOWED_EXTENSIONS.contains(&ext),
+        None => false,
+    }
+}
+
+/// Converts a vector of NaiveTodo to a vector of Todo
+fn naive_to_full(naives: &[NaiveTodo]) -> Vec<Todo> {
+    naives
+        .iter()
+        .map(|nt| Todo {
+            title: nt.value.clone(),
+            author: "".to_string(),
+            email: "".to_string(),
+            datetime: "".to_string(),
+            file: nt.file_path.clone(),
+            line: nt.line_number,
+        })
+        .collect()
 }

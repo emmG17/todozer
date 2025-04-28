@@ -25,9 +25,6 @@ pub fn find_blame(repo_dir: &PathBuf, file: &PathBuf, todos: &Vec<NaiveTodo>) ->
 
     // File relative to the repository
     let file_relative = relative_path(&repo_dir, file);
-    println!("File: {}", file_relative.display());
-
-    println!("Repository: {}", repo.path().display());
 
     // Get the blames for each TODO
     todos.iter().for_each(|t| {
@@ -41,7 +38,7 @@ pub fn find_blame(repo_dir: &PathBuf, file: &PathBuf, todos: &Vec<NaiveTodo>) ->
                 line: t.line_number
             }),
             None => {
-                println!("Error getting blame for line {}", t.line_number);
+                eprintln!("Error getting blame for line {}", t.line_number);
                 return;
             }
         };
