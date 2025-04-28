@@ -1,7 +1,3 @@
-Got it! Here's the updated README with your changes:
-
----
-
 # Todozer
 
 **todozer** is a simple CLI tool that searches for TODO comments in source files.  
