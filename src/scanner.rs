@@ -46,37 +46,39 @@ pub fn run(cli: &Cli) {
 
     // Check if the path is a file
     if fs::metadata(&cli.path).unwrap().is_file() {
-        println!("Path is a file");
         let dir = Path::new(&cli.path);
-        let todos = find_todos(&dir);
-
-        // Check if the file is a git repository, recurse until we find the first parent directory
-        // that is a git repository
-        let path = cli.path.clone();
-        match find_git_repo(path.as_str()) {
-            Some(repo) => {
-               println!("Repo {}", repo.display());
-               let full_todos = find_blame(&repo, &dir.to_path_buf(), &todos);   
-               to_json(&full_todos, &cli.out)
-            }
-            None => {
-                println!("Path is not a git repository");
-                return;
-            }
-        };
+        handle_file(dir, cli);
+        return;
     }
 
     // Check if the path is a directory
     if fs::metadata(&cli.path).unwrap().is_dir() {
-        println!("Path is a directory");
-        // Check if the directory is a git repository
-        let dir = PathBuf::from(&cli.path);
-        if is_git_repo(&dir) {
-            println!("Path is a git repository");
-        } else {
-            println!("Path is not a git repository");
+        let repo_root = match find_git_repo(&cli.path) {
+            Some(repo) => repo,
+            None => {
+                println!("No git repository found");
+                return;
+            }
+        };
+
+        let mut all_todos = Vec::new();
+
+        // Iterate over all files in the directory
+        let walker = walkdir::WalkDir::new(&cli.path)
+            .follow_links(true)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|e| e.path().is_file());
+
+        for entry in walker {
+            let file_path = entry.path();
+
+            let todos = find_todos(file_path);
+            let full_todos = find_blame(&repo_root, &file_path.to_path_buf(), &todos);
+            all_todos.extend(full_todos);
         }
-        return;
+
+        to_json(&all_todos, &cli.out); 
     }
 }
 
@@ -188,4 +190,20 @@ fn search_items_combinations(search_terms: &[&str], end_terms: &[&str]) -> Vec<S
         }
     }
     return combinations;
+}
+
+fn handle_file(file_path: &Path, cli: &Cli) {
+    let todos = find_todos(file_path);
+
+    let path = cli.path.clone();
+
+    match find_git_repo(path.as_str()) {
+        Some(repo) => {
+            let full_todos = find_blame(&repo, &file_path.to_path_buf(), &todos);
+            to_json(&full_todos, &cli.out)
+        }
+        None => {
+            return;
+        }
+    };
 }
